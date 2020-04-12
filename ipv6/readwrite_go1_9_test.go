@@ -1,8 +1,10 @@
-// Copyright 2012 The Go Authors. All rights reserved.
+// Copyright 2017 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package ipv4_test
+// +build go1.9
+
+package ipv6_test
 
 import (
 	"bytes"
@@ -14,111 +16,59 @@ import (
 	"testing"
 
 	"golang.org/x/net/internal/iana"
-	"golang.org/x/net/ipv4"
-	"golang.org/x/net/nettest"
+	"golang.org/x/net/internal/nettest"
+	"golang.org/x/net/ipv6"
 )
-
-func BenchmarkReadWriteUnicast(b *testing.B) {
-	switch runtime.GOOS {
-	case "fuchsia", "hurd", "js", "nacl", "plan9", "windows":
-		b.Skipf("not supported on %s", runtime.GOOS)
-	}
-
-	c, err := nettest.NewLocalPacketListener("udp4")
-	if err != nil {
-		b.Skipf("not supported on %s/%s: %v", runtime.GOOS, runtime.GOARCH, err)
-	}
-	defer c.Close()
-
-	dst := c.LocalAddr()
-	wb, rb := []byte("HELLO-R-U-THERE"), make([]byte, 128)
-
-	b.Run("NetUDP", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			if _, err := c.WriteTo(wb, dst); err != nil {
-				b.Fatal(err)
-			}
-			if _, _, err := c.ReadFrom(rb); err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-	b.Run("IPv4UDP", func(b *testing.B) {
-		p := ipv4.NewPacketConn(c)
-		cf := ipv4.FlagTTL | ipv4.FlagInterface
-		if err := p.SetControlMessage(cf, true); err != nil {
-			b.Fatal(err)
-		}
-		cm := ipv4.ControlMessage{TTL: 1}
-		ifi, _ := nettest.RoutedInterface("ip4", net.FlagUp|net.FlagLoopback)
-		if ifi != nil {
-			cm.IfIndex = ifi.Index
-		}
-
-		for i := 0; i < b.N; i++ {
-			if _, err := p.WriteTo(wb, &cm, dst); err != nil {
-				b.Fatal(err)
-			}
-			if _, _, _, err := p.ReadFrom(rb); err != nil {
-				b.Fatal(err)
-			}
-		}
-	})
-}
 
 func BenchmarkPacketConnReadWriteUnicast(b *testing.B) {
 	switch runtime.GOOS {
-	case "fuchsia", "hurd", "js", "nacl", "plan9", "windows":
+	case "nacl", "plan9":
 		b.Skipf("not supported on %s", runtime.GOOS)
 	}
 
 	payload := []byte("HELLO-R-U-THERE")
-	iph, err := (&ipv4.Header{
-		Version:  ipv4.Version,
-		Len:      ipv4.HeaderLen,
-		TotalLen: ipv4.HeaderLen + len(payload),
-		TTL:      1,
-		Protocol: iana.ProtocolReserved,
-		Src:      net.IPv4(192, 0, 2, 1),
-		Dst:      net.IPv4(192, 0, 2, 254),
-	}).Marshal()
-	if err != nil {
-		b.Fatal(err)
+	iph := []byte{
+		0x69, 0x8b, 0xee, 0xf1, 0xca, 0xfe, 0xff, 0x01,
+		0x20, 0x01, 0x0d, 0xb8, 0x00, 0x01, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0x20, 0x01, 0x0d, 0xb8, 0x00, 0x02, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 	}
-	greh := []byte{0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00}
+	greh := []byte{0x00, 0x00, 0x86, 0xdd, 0x00, 0x00, 0x00, 0x00}
 	datagram := append(greh, append(iph, payload...)...)
 	bb := make([]byte, 128)
-	cm := ipv4.ControlMessage{
-		Src: net.IPv4(127, 0, 0, 1),
+	cm := ipv6.ControlMessage{
+		TrafficClass: iana.DiffServAF11 | iana.CongestionExperienced,
+		HopLimit:     1,
+		Src:          net.IPv6loopback,
 	}
-	ifi, _ := nettest.RoutedInterface("ip4", net.FlagUp|net.FlagLoopback)
-	if ifi != nil {
+	if ifi := nettest.RoutedInterface("ip6", net.FlagUp|net.FlagLoopback); ifi != nil {
 		cm.IfIndex = ifi.Index
 	}
 
 	b.Run("UDP", func(b *testing.B) {
-		c, err := nettest.NewLocalPacketListener("udp4")
+		c, err := nettest.NewLocalPacketListener("udp6")
 		if err != nil {
 			b.Skipf("not supported on %s/%s: %v", runtime.GOOS, runtime.GOARCH, err)
 		}
 		defer c.Close()
-		p := ipv4.NewPacketConn(c)
+		p := ipv6.NewPacketConn(c)
 		dst := c.LocalAddr()
-		cf := ipv4.FlagTTL | ipv4.FlagInterface
+		cf := ipv6.FlagHopLimit | ipv6.FlagInterface
 		if err := p.SetControlMessage(cf, true); err != nil {
 			b.Fatal(err)
 		}
-		wms := []ipv4.Message{
+		wms := []ipv6.Message{
 			{
 				Buffers: [][]byte{payload},
 				Addr:    dst,
 				OOB:     cm.Marshal(),
 			},
 		}
-		rms := []ipv4.Message{
+		rms := []ipv6.Message{
 			{
 				Buffers: [][]byte{bb},
-				OOB:     ipv4.NewControlMessage(cf),
+				OOB:     ipv6.NewControlMessage(cf),
 			},
 		}
 		b.Run("Net", func(b *testing.B) {
@@ -160,28 +110,28 @@ func BenchmarkPacketConnReadWriteUnicast(b *testing.B) {
 			b.Skip("net.inet.gre.allow=0 by default on openbsd")
 		}
 
-		c, err := net.ListenPacket(fmt.Sprintf("ip4:%d", iana.ProtocolGRE), "127.0.0.1")
+		c, err := net.ListenPacket(fmt.Sprintf("ip6:%d", iana.ProtocolGRE), "::1")
 		if err != nil {
 			b.Skipf("not supported on %s/%s: %v", runtime.GOOS, runtime.GOARCH, err)
 		}
 		defer c.Close()
-		p := ipv4.NewPacketConn(c)
+		p := ipv6.NewPacketConn(c)
 		dst := c.LocalAddr()
-		cf := ipv4.FlagTTL | ipv4.FlagInterface
+		cf := ipv6.FlagTrafficClass | ipv6.FlagHopLimit | ipv6.FlagSrc | ipv6.FlagDst | ipv6.FlagInterface | ipv6.FlagPathMTU
 		if err := p.SetControlMessage(cf, true); err != nil {
 			b.Fatal(err)
 		}
-		wms := []ipv4.Message{
+		wms := []ipv6.Message{
 			{
 				Buffers: [][]byte{datagram},
 				Addr:    dst,
 				OOB:     cm.Marshal(),
 			},
 		}
-		rms := []ipv4.Message{
+		rms := []ipv6.Message{
 			{
 				Buffers: [][]byte{bb},
-				OOB:     ipv4.NewControlMessage(cf),
+				OOB:     ipv6.NewControlMessage(cf),
 			},
 		}
 		b.Run("Net", func(b *testing.B) {
@@ -217,115 +167,30 @@ func BenchmarkPacketConnReadWriteUnicast(b *testing.B) {
 	})
 }
 
-func TestPacketConnConcurrentReadWriteUnicastUDP(t *testing.T) {
-	switch runtime.GOOS {
-	case "fuchsia", "hurd", "js", "nacl", "plan9":
-		t.Skipf("not supported on %s", runtime.GOOS)
-	}
-
-	c, err := nettest.NewLocalPacketListener("udp4")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	p := ipv4.NewPacketConn(c)
-	defer p.Close()
-
-	dst := c.LocalAddr()
-	ifi, _ := nettest.RoutedInterface("ip4", net.FlagUp|net.FlagLoopback)
-	cf := ipv4.FlagTTL | ipv4.FlagSrc | ipv4.FlagDst | ipv4.FlagInterface
-	wb := []byte("HELLO-R-U-THERE")
-
-	if err := p.SetControlMessage(cf, true); err != nil { // probe before test
-		if protocolNotSupported(err) {
-			t.Skipf("not supported on %s", runtime.GOOS)
-		}
-		t.Fatal(err)
-	}
-
-	var wg sync.WaitGroup
-	reader := func() {
-		defer wg.Done()
-		rb := make([]byte, 128)
-		if n, cm, _, err := p.ReadFrom(rb); err != nil {
-			t.Error(err)
-			return
-		} else if !bytes.Equal(rb[:n], wb) {
-			t.Errorf("got %v; want %v", rb[:n], wb)
-			return
-		} else {
-			s := cm.String()
-			if strings.Contains(s, ",") {
-				t.Errorf("should be space-separated values: %s", s)
-			}
-		}
-	}
-	writer := func(toggle bool) {
-		defer wg.Done()
-		cm := ipv4.ControlMessage{
-			Src: net.IPv4(127, 0, 0, 1),
-		}
-		if ifi != nil {
-			cm.IfIndex = ifi.Index
-		}
-		if err := p.SetControlMessage(cf, toggle); err != nil {
-			t.Error(err)
-			return
-		}
-		if n, err := p.WriteTo(wb, &cm, dst); err != nil {
-			t.Error(err)
-			return
-		} else if n != len(wb) {
-			t.Errorf("got %d; want %d", n, len(wb))
-			return
-		}
-	}
-
-	const N = 10
-	wg.Add(N)
-	for i := 0; i < N; i++ {
-		go reader()
-	}
-	wg.Add(2 * N)
-	for i := 0; i < 2*N; i++ {
-		go writer(i%2 != 0)
-	}
-	wg.Add(N)
-	for i := 0; i < N; i++ {
-		go reader()
-	}
-	wg.Wait()
-}
-
 func TestPacketConnConcurrentReadWriteUnicast(t *testing.T) {
 	switch runtime.GOOS {
-	case "fuchsia", "hurd", "js", "nacl", "plan9", "windows":
+	case "nacl", "plan9":
 		t.Skipf("not supported on %s", runtime.GOOS)
 	}
 
 	payload := []byte("HELLO-R-U-THERE")
-	iph, err := (&ipv4.Header{
-		Version:  ipv4.Version,
-		Len:      ipv4.HeaderLen,
-		TotalLen: ipv4.HeaderLen + len(payload),
-		TTL:      1,
-		Protocol: iana.ProtocolReserved,
-		Src:      net.IPv4(192, 0, 2, 1),
-		Dst:      net.IPv4(192, 0, 2, 254),
-	}).Marshal()
-	if err != nil {
-		t.Fatal(err)
+	iph := []byte{
+		0x69, 0x8b, 0xee, 0xf1, 0xca, 0xfe, 0xff, 0x01,
+		0x20, 0x01, 0x0d, 0xb8, 0x00, 0x01, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+		0x20, 0x01, 0x0d, 0xb8, 0x00, 0x02, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
 	}
-	greh := []byte{0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00}
+	greh := []byte{0x00, 0x00, 0x86, 0xdd, 0x00, 0x00, 0x00, 0x00}
 	datagram := append(greh, append(iph, payload...)...)
 
 	t.Run("UDP", func(t *testing.T) {
-		c, err := nettest.NewLocalPacketListener("udp4")
+		c, err := nettest.NewLocalPacketListener("udp6")
 		if err != nil {
 			t.Skipf("not supported on %s/%s: %v", runtime.GOOS, runtime.GOARCH, err)
 		}
 		defer c.Close()
-		p := ipv4.NewPacketConn(c)
+		p := ipv6.NewPacketConn(c)
 		t.Run("ToFrom", func(t *testing.T) {
 			testPacketConnConcurrentReadWriteUnicast(t, p, payload, c.LocalAddr(), false)
 		})
@@ -341,12 +206,12 @@ func TestPacketConnConcurrentReadWriteUnicast(t *testing.T) {
 			t.Skip("net.inet.gre.allow=0 by default on openbsd")
 		}
 
-		c, err := net.ListenPacket(fmt.Sprintf("ip4:%d", iana.ProtocolGRE), "127.0.0.1")
+		c, err := net.ListenPacket(fmt.Sprintf("ip6:%d", iana.ProtocolGRE), "::1")
 		if err != nil {
 			t.Skipf("not supported on %s/%s: %v", runtime.GOOS, runtime.GOARCH, err)
 		}
 		defer c.Close()
-		p := ipv4.NewPacketConn(c)
+		p := ipv6.NewPacketConn(c)
 		t.Run("ToFrom", func(t *testing.T) {
 			testPacketConnConcurrentReadWriteUnicast(t, p, datagram, c.LocalAddr(), false)
 		})
@@ -356,14 +221,12 @@ func TestPacketConnConcurrentReadWriteUnicast(t *testing.T) {
 	})
 }
 
-func testPacketConnConcurrentReadWriteUnicast(t *testing.T, p *ipv4.PacketConn, data []byte, dst net.Addr, batch bool) {
-	t.Helper()
-
-	ifi, _ := nettest.RoutedInterface("ip4", net.FlagUp|net.FlagLoopback)
-	cf := ipv4.FlagTTL | ipv4.FlagSrc | ipv4.FlagDst | ipv4.FlagInterface
+func testPacketConnConcurrentReadWriteUnicast(t *testing.T, p *ipv6.PacketConn, data []byte, dst net.Addr, batch bool) {
+	ifi := nettest.RoutedInterface("ip6", net.FlagUp|net.FlagLoopback)
+	cf := ipv6.FlagTrafficClass | ipv6.FlagHopLimit | ipv6.FlagSrc | ipv6.FlagDst | ipv6.FlagInterface | ipv6.FlagPathMTU
 
 	if err := p.SetControlMessage(cf, true); err != nil { // probe before test
-		if protocolNotSupported(err) {
+		if nettest.ProtocolNotSupported(err) {
 			t.Skipf("not supported on %s", runtime.GOOS)
 		}
 		t.Fatal(err)
@@ -390,10 +253,10 @@ func testPacketConnConcurrentReadWriteUnicast(t *testing.T, p *ipv4.PacketConn, 
 	}
 	batchReader := func() {
 		defer wg.Done()
-		ms := []ipv4.Message{
+		ms := []ipv6.Message{
 			{
 				Buffers: [][]byte{make([]byte, 128)},
-				OOB:     ipv4.NewControlMessage(cf),
+				OOB:     ipv6.NewControlMessage(cf),
 			},
 		}
 		n, err := p.ReadBatch(ms, 0)
@@ -405,22 +268,12 @@ func testPacketConnConcurrentReadWriteUnicast(t *testing.T, p *ipv4.PacketConn, 
 			t.Errorf("got %d; want %d", n, len(ms))
 			return
 		}
-		var cm ipv4.ControlMessage
+		var cm ipv6.ControlMessage
 		if err := cm.Parse(ms[0].OOB[:ms[0].NN]); err != nil {
 			t.Error(err)
 			return
 		}
-		var b []byte
-		if _, ok := dst.(*net.IPAddr); ok {
-			var h ipv4.Header
-			if err := h.Parse(ms[0].Buffers[0][:ms[0].N]); err != nil {
-				t.Error(err)
-				return
-			}
-			b = ms[0].Buffers[0][h.Len:ms[0].N]
-		} else {
-			b = ms[0].Buffers[0][:ms[0].N]
-		}
+		b := ms[0].Buffers[0][:ms[0].N]
 		if !bytes.Equal(b, data) {
 			t.Errorf("got %#v; want %#v", b, data)
 			return
@@ -433,8 +286,10 @@ func testPacketConnConcurrentReadWriteUnicast(t *testing.T, p *ipv4.PacketConn, 
 	}
 	writer := func(toggle bool) {
 		defer wg.Done()
-		cm := ipv4.ControlMessage{
-			Src: net.IPv4(127, 0, 0, 1),
+		cm := ipv6.ControlMessage{
+			TrafficClass: iana.DiffServAF11 | iana.CongestionExperienced,
+			HopLimit:     1,
+			Src:          net.IPv6loopback,
 		}
 		if ifi != nil {
 			cm.IfIndex = ifi.Index
@@ -455,8 +310,10 @@ func testPacketConnConcurrentReadWriteUnicast(t *testing.T, p *ipv4.PacketConn, 
 	}
 	batchWriter := func(toggle bool) {
 		defer wg.Done()
-		cm := ipv4.ControlMessage{
-			Src: net.IPv4(127, 0, 0, 1),
+		cm := ipv6.ControlMessage{
+			TrafficClass: iana.DiffServAF11 | iana.CongestionExperienced,
+			HopLimit:     1,
+			Src:          net.IPv6loopback,
 		}
 		if ifi != nil {
 			cm.IfIndex = ifi.Index
@@ -465,7 +322,7 @@ func testPacketConnConcurrentReadWriteUnicast(t *testing.T, p *ipv4.PacketConn, 
 			t.Error(err)
 			return
 		}
-		ms := []ipv4.Message{
+		ms := []ipv6.Message{
 			{
 				Buffers: [][]byte{data},
 				OOB:     cm.Marshal(),
@@ -503,7 +360,6 @@ func testPacketConnConcurrentReadWriteUnicast(t *testing.T, p *ipv4.PacketConn, 
 		} else {
 			go writer(i%2 != 0)
 		}
-
 	}
 	wg.Add(N)
 	for i := 0; i < N; i++ {

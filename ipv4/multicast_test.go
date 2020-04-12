@@ -29,7 +29,7 @@ var packetConnReadWriteMulticastUDPTests = []struct {
 
 func TestPacketConnReadWriteMulticastUDP(t *testing.T) {
 	switch runtime.GOOS {
-	case "fuchsia", "hurd", "illumos", "js", "nacl", "plan9", "solaris", "windows":
+	case "fuchsia", "hurd", "illumos", "js", "nacl", "plan9", "solaris":
 		t.Skipf("not supported on %s", runtime.GOOS)
 	}
 	ifi, err := nettest.RoutedInterface("ip4", net.FlagUp|net.FlagMulticast|net.FlagLoopback)
@@ -117,7 +117,9 @@ var packetConnReadWriteMulticastICMPTests = []struct {
 
 func TestPacketConnReadWriteMulticastICMP(t *testing.T) {
 	switch runtime.GOOS {
-	case "fuchsia", "hurd", "illumos", "js", "nacl", "plan9", "solaris", "windows":
+	case "windows":
+		t.Skipf("test hangs on windows when run as Administrator")
+	case "fuchsia", "hurd", "illumos", "js", "nacl", "plan9", "solaris":
 		t.Skipf("not supported on %s", runtime.GOOS)
 	}
 	if !nettest.SupportsRawSocket() {
@@ -228,9 +230,12 @@ var rawConnReadWriteMulticastICMPTests = []struct {
 
 func TestRawConnReadWriteMulticastICMP(t *testing.T) {
 	switch runtime.GOOS {
-	case "fuchsia", "hurd", "illumos", "js", "nacl", "plan9", "solaris", "windows":
+	case "fuchsia", "hurd", "illumos", "js", "nacl", "plan9", "solaris":
 		t.Skipf("not supported on %s", runtime.GOOS)
+	case "windows":
+		t.Skipf("test hangs on windows when run as Administrator")
 	}
+
 	if testing.Short() {
 		t.Skip("to avoid external network")
 	}
